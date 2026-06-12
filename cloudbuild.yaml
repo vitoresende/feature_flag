@@ -1,11 +1,11 @@
 steps:
-  # 1. Fetch .env from GCP Secret Manager
+  # 1. Fetch .env from GCP Secret Manager dynamically using project number
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        gcloud secrets versions access ${_GCP_ENV_SECRET_NAME} > .env
+        gcloud secrets versions access projects/$PROJECT_NUMBER/secrets/${_SECRET_NAME}/versions/latest > .env
     id: 'fetch-secrets'
 
   # 2. Install dependencies (using clean install)
@@ -20,7 +20,7 @@ steps:
     args: ['run', 'build']
     id: 'build-frontend'
 
-  # 4. Deploy to Firebase Hosting
+  # 4. Deploy to Firebase Hosting & Firestore Rules
   - name: 'node:22.20.0'
     entrypoint: 'bash'
     args:
@@ -30,14 +30,17 @@ steps:
         # Dynamically inject the target hosting site into firebase.json
         node -e "const fs=require('fs'); const fc=JSON.parse(fs.readFileSync('firebase.json','utf8')); fc.hosting.site='${_FIREBASE_HOSTING_SITE}'; fs.writeFileSync('firebase.json',JSON.stringify(fc,null,2));"
         
+        echo "Deploying Firestore Rules..."
+        npm run deploy:rules -- --project $PROJECT_ID --non-interactive
+        
         echo "Deploying Hosting to site ${_FIREBASE_HOSTING_SITE}"
         firebase deploy --only hosting --non-interactive --project $PROJECT_ID
     id: 'deploy-firebase'
 
 substitutions:
-  # Set default values which can be overridden in Cloud Build trigger configurations
-  _GCP_ENV_SECRET_NAME: 'projects/191508435898/secrets/dotenv-feature-flags-dev/versions/latest'
-  _FIREBASE_HOSTING_SITE: 'arq-feature-flag'
+  # Set placeholder values which MUST be overridden in Cloud Build trigger configurations in GCP Console
+  _SECRET_NAME: 'YOUR_SECRET_NAME'
+  _FIREBASE_HOSTING_SITE: 'YOUR_FIREBASE_HOSTING_SITE'
 
 options:
   logging: CLOUD_LOGGING_ONLY
