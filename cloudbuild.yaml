@@ -1,0 +1,43 @@
+steps:
+  # 1. Fetch .env from GCP Secret Manager
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud secrets versions access ${_GCP_ENV_SECRET_NAME} > .env
+    id: 'fetch-secrets'
+
+  # 2. Install dependencies (using clean install)
+  - name: 'node:22.20.0'
+    entrypoint: 'npm'
+    args: ['ci']
+    id: 'install-root-deps'
+
+  # 3. Build the frontend
+  - name: 'node:22.20.0'
+    entrypoint: 'npm'
+    args: ['run', 'build']
+    id: 'build-frontend'
+
+  # 4. Deploy to Firebase Hosting
+  - name: 'node:22.20.0'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        npm install -g firebase-tools
+        # Dynamically inject the target hosting site into firebase.json
+        node -e "const fs=require('fs'); const fc=JSON.parse(fs.readFileSync('firebase.json','utf8')); fc.hosting.site='${_FIREBASE_HOSTING_SITE}'; fs.writeFileSync('firebase.json',JSON.stringify(fc,null,2));"
+        
+        echo "Deploying Hosting to site ${_FIREBASE_HOSTING_SITE}"
+        firebase deploy --only hosting --non-interactive --project $PROJECT_ID
+    id: 'deploy-firebase'
+
+substitutions:
+  # Set default values which can be overridden in Cloud Build trigger configurations
+  _GCP_ENV_SECRET_NAME: 'projects/191508435898/secrets/dotenv-feature-flags-dev/versions/latest'
+  _FIREBASE_HOSTING_SITE: 'arq-feature-flag'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
