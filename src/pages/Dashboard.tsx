@@ -651,12 +651,13 @@ export default function Dashboard() {
           />
 
           {/* Dialog Body */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl relative z-10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 p-6 space-y-6">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl relative z-10 flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             
             {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-zinc-850">
+            <div className="flex items-center justify-between p-6 pb-4 border-b border-zinc-850 shrink-0">
               <h3 className="text-base font-bold text-zinc-100">Criar Feature Flag Unificada</h3>
               <button 
+                type="button"
                 onClick={() => setShowModal(false)}
                 disabled={modalLoading}
                 className="text-zinc-500 hover:text-zinc-300 text-sm font-semibold cursor-pointer"
@@ -666,171 +667,173 @@ export default function Dashboard() {
             </div>
 
             {/* Form */}
-            <form onSubmit={handleCreate} className="space-y-6">
+            <form onSubmit={handleCreate} className="flex flex-col min-h-0">
+              <div className="p-6 space-y-6 overflow-y-auto">
               
-              {modalError && (
-                <div className="p-4 rounded-xl bg-red-950/30 border border-red-900/50 text-red-200 text-xs flex items-center gap-2">
-                  <Info className="h-4 w-4 text-red-400 shrink-0" />
-                  <span>{modalError}</span>
-                </div>
-              )}
-
-              {/* Key Input */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
-                  Identificador / Chave (Maiúsculas e Sublinhados)
-                </label>
-                <input
-                  type="text"
-                  placeholder="EX: HABILITAR_COMPRA_PIX"
-                  value={newKey}
-                  onChange={(e) => setNewKey(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm bg-zinc-955 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none uppercase font-mono tracking-wide bg-zinc-950"
-                  required
-                  disabled={modalLoading}
-                />
-                <p className="text-[10px] text-zinc-500">
-                  A chave será criada simultaneamente em todos os ambientes cadastrados para evitar desalinhamento.
-                </p>
-              </div>
-
-              {/* Description Input */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
-                  Descrição do Recurso
-                </label>
-                <textarea
-                  placeholder="Descreva o que este recurso controla na aplicação..."
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  rows={3}
-                  className="w-full px-4 py-2.5 text-sm bg-zinc-955 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none resize-none bg-zinc-950"
-                  disabled={modalLoading}
-                />
-              </div>
-
-              {/* Tags / Scope Selector (Breadcrumbs style) */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400 font-sans">
-                  Tags / Marcadores
-                </label>
-                
-                {/* Render current tags */}
-                {newTags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2 bg-zinc-950 rounded-xl border border-zinc-850">
-                    {newTags.map(tag => (
-                      <span 
-                        key={tag}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
-                          tag === 'backend' 
-                            ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400' 
-                            : tag === 'frontend'
-                              ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                              : 'bg-zinc-800 border border-zinc-700 text-zinc-300'
-                        }`}
-                      >
-                        <span>{tag}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveTag(tag)}
-                          className="hover:text-red-400 transition-colors focus:outline-none text-[11px] font-bold leading-none cursor-pointer"
-                        >
-                          &times;
-                        </button>
-                      </span>
-                    ))}
+                {modalError && (
+                  <div className="p-4 rounded-xl bg-red-950/30 border border-red-900/50 text-red-200 text-xs flex items-center gap-2">
+                    <Info className="h-4 w-4 text-red-400 shrink-0" />
+                    <span>{modalError}</span>
                   </div>
                 )}
 
-                {/* Input and Add Action */}
-                <div className="flex gap-2">
+                {/* Key Input */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    Identificador / Chave (Maiúsculas e Sublinhados)
+                  </label>
                   <input
                     type="text"
-                    placeholder="Adicionar tag (ex: mobile, pix)..."
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddTag(tagInput);
-                      }
-                    }}
+                    placeholder="EX: HABILITAR_COMPRA_PIX"
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value)}
+                    className="w-full px-4 py-2.5 text-sm bg-zinc-955 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none uppercase font-mono tracking-wide bg-zinc-950"
+                    required
                     disabled={modalLoading}
-                    className="flex-1 px-4 py-2.5 text-sm bg-zinc-955 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none bg-zinc-950"
                   />
-                  <button
-                    type="button"
-                    onClick={() => handleAddTag(tagInput)}
-                    disabled={modalLoading}
-                    className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-750 text-xs font-bold rounded-xl text-zinc-350 hover:text-zinc-200 border border-zinc-700 transition-all cursor-pointer"
-                  >
-                    Adicionar
-                  </button>
+                  <p className="text-[10px] text-zinc-500">
+                    A chave será criada simultaneamente em todos os ambientes cadastrados para evitar desalinhamento.
+                  </p>
                 </div>
 
-                {/* Suggestions */}
-                <div className="flex items-center gap-2 pt-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                  <span>Sugestões:</span>
-                  <button
-                    type="button"
-                    onClick={() => handleAddTag("backend")}
-                    className="hover:text-blue-400 hover:underline focus:outline-none cursor-pointer"
-                  >
-                    + backend
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAddTag("frontend")}
-                    className="hover:text-emerald-400 hover:underline focus:outline-none cursor-pointer"
-                  >
-                    + frontend
-                  </button>
-                </div>
-              </div>
-
-              {/* Initial Values per Environment */}
-              <div className="space-y-3">
-                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
-                  Estado Inicial por Ambiente
-                </label>
-                
+                {/* Description Input */}
                 <div className="space-y-2">
-                  {ENVIRONMENTS.map((env) => {
-                    const isEnabled = newEnabledMap[env.id] || false;
-                    return (
-                      <div 
-                        key={env.id} 
-                        className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${env.badgeClass}`}>
-                            {env.name}
-                          </span>
-                          <span className="text-xs text-zinc-400">Ativa neste ambiente?</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setNewEnabledMap(prev => ({
-                            ...prev,
-                            [env.id]: !isEnabled
-                          }))}
-                          disabled={modalLoading}
-                          className="focus:outline-none transition-transform active:scale-95 cursor-pointer"
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    Descrição do Recurso
+                  </label>
+                  <textarea
+                    placeholder="Descreva o que este recurso controla na aplicação..."
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2.5 text-sm bg-zinc-955 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none resize-none bg-zinc-950"
+                    disabled={modalLoading}
+                  />
+                </div>
+
+                {/* Tags / Scope Selector (Breadcrumbs style) */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400 font-sans">
+                    Tags / Marcadores
+                  </label>
+                  
+                  {/* Render current tags */}
+                  {newTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 p-2 bg-zinc-950 rounded-xl border border-zinc-850">
+                      {newTags.map(tag => (
+                        <span 
+                          key={tag}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
+                            tag === 'backend' 
+                              ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400' 
+                              : tag === 'frontend'
+                                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                                : 'bg-zinc-800 border border-zinc-700 text-zinc-300'
+                          }`}
                         >
-                          {isEnabled ? (
-                            <ToggleRight className="h-8 w-8 text-emerald-500" />
-                          ) : (
-                            <ToggleLeft className="h-8 w-8 text-zinc-650" />
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
+                          <span>{tag}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(tag)}
+                            className="hover:text-red-400 transition-colors focus:outline-none text-[11px] font-bold leading-none cursor-pointer"
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Input and Add Action */}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Adicionar tag (ex: mobile, pix)..."
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddTag(tagInput);
+                        }
+                      }}
+                      disabled={modalLoading}
+                      className="flex-1 px-4 py-2.5 text-sm bg-zinc-955 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none bg-zinc-950"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddTag(tagInput)}
+                      disabled={modalLoading}
+                      className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-750 text-xs font-bold rounded-xl text-zinc-350 hover:text-zinc-200 border border-zinc-700 transition-all cursor-pointer"
+                    >
+                      Adicionar
+                    </button>
+                  </div>
+
+                  {/* Suggestions */}
+                  <div className="flex items-center gap-2 pt-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                    <span>Sugestões:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleAddTag("backend")}
+                      className="hover:text-blue-400 hover:underline focus:outline-none cursor-pointer"
+                    >
+                      + backend
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddTag("frontend")}
+                      className="hover:text-emerald-400 hover:underline focus:outline-none cursor-pointer"
+                    >
+                      + frontend
+                    </button>
+                  </div>
+                </div>
+
+                {/* Initial Values per Environment */}
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    Estado Inicial por Ambiente
+                  </label>
+                  
+                  <div className="space-y-2">
+                    {ENVIRONMENTS.map((env) => {
+                      const isEnabled = newEnabledMap[env.id] || false;
+                      return (
+                        <div 
+                          key={env.id} 
+                          className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${env.badgeClass}`}>
+                              {env.name}
+                            </span>
+                            <span className="text-xs text-zinc-400">Ativa neste ambiente?</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setNewEnabledMap(prev => ({
+                              ...prev,
+                              [env.id]: !isEnabled
+                            }))}
+                            disabled={modalLoading}
+                            className="focus:outline-none transition-transform active:scale-95 cursor-pointer"
+                          >
+                            {isEnabled ? (
+                              <ToggleRight className="h-8 w-8 text-emerald-500" />
+                            ) : (
+                              <ToggleLeft className="h-8 w-8 text-zinc-650" />
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
               {/* Actions Footer */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-zinc-850">
+              <div className="flex justify-end gap-3 p-6 pt-4 border-t border-zinc-850 shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
