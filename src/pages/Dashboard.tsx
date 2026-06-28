@@ -24,12 +24,15 @@ import {
   RefreshCw,
   Info,
   GitBranch,
-  AlertTriangle
+  AlertTriangle,
+  Edit3
 } from "lucide-react";
 
 interface FeatureFlag {
   id: string;
+  type?: "boolean" | "numeric";
   enabled: boolean;
+  value?: number;
   description: string;
   category?: string;
   tags?: string[];
@@ -53,12 +56,25 @@ export default function Dashboard() {
   const [newDescription, setNewDescription] = useState("");
   const [newTags, setNewTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [newType, setNewType] = useState<"boolean" | "numeric">("boolean");
   const [newEnabledMap, setNewEnabledMap] = useState<Record<string, boolean>>({
     dev: false,
     prod: false
   });
+  const [newValuesMap, setNewValuesMap] = useState<Record<string, number>>({
+    dev: 10,
+    prod: 10
+  });
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+
+  // Numeric Edit Modal States
+  const [showEditNumericModal, setShowEditNumericModal] = useState(false);
+  const [editFlagId, setEditFlagId] = useState("");
+  const [editEnvId, setEditEnvId] = useState("");
+  const [editValue, setEditValue] = useState("");
+  const [editModalLoading, setEditModalLoading] = useState(false);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
 
   // Unified Confirmation/Alert Modal State
   const [confirmModal, setConfirmModal] = useState<{
@@ -156,6 +172,7 @@ export default function Dashboard() {
       } else {
         // Initialize/Create flag in this environment (resolves environment drift)
         await setDoc(docRef, {
+          type: "boolean",
           enabled: !currentStatus,
           description: fallbackDescription || "Inicializado automaticamente para resolver desalinhamento.",
           updatedAt: serverTimestamp()
@@ -201,13 +218,22 @@ export default function Dashboard() {
       const promises = ENVIRONMENTS.map((env) => {
         const docRef = doc(env.db, env.collectionName, formattedKey);
         const initialEnabled = newEnabledMap[env.id] || false;
+        const initialValue = newValuesMap[env.id] !== undefined ? newValuesMap[env.id] : 10;
         
-        return setDoc(docRef, {
-          enabled: initialEnabled,
+        const docData: any = {
+          type: newType,
           description: newDescription.trim(),
           tags: newTags,
           updatedAt: serverTimestamp()
-        });
+        };
+
+        if (newType === "numeric") {
+          docData.value = Number(initialValue);
+        } else {
+          docData.enabled = initialEnabled;
+        }
+
+        return setDoc(docRef, docData);
       });
 
       await Promise.all(promises);
@@ -217,7 +243,9 @@ export default function Dashboard() {
       setNewDescription("");
       setNewTags([]);
       setTagInput("");
+      setNewType("boolean");
       setNewEnabledMap({ dev: false, prod: false });
+      setNewValuesMap({ dev: 10, prod: 10 });
       setShowModal(false);
       showAlert("Flag Criada", `A Feature Flag "${formattedKey}" foi criada em todos os ambientes.`, "success");
     } catch (e: any) {
@@ -255,12 +283,23 @@ export default function Dashboard() {
     });
   };
 
+  // Get flag type (defaults to boolean for backwards compatibility)
+  const getFlagType = (flagId: string): "boolean" | "numeric" => {
+    for (const env of ENVIRONMENTS) {
+      const flag = rawFlagsByEnv[env.id]?.[flagId];
+      if (flag?.type) return flag.type;
+      if (flag && "value" in flag) return "numeric";
+    }
+    return "boolean";
+  };
+
   // Alignment Helper: Writes the missing flag to any environment where it does not exist
   const handleAlignFlag = (flagId: string, currentDescription: string) => {
+    const flagType = getFlagType(flagId);
     setConfirmModal({
       isOpen: true,
       title: "Sincronizar Ambientes",
-      message: `Deseja sincronizar a chave "${flagId}" nos ambientes onde ela está atualmente ausente? Ela iniciará como Desativada (false).`,
+      message: `Deseja sincronizar a chave "${flagId}" nos ambientes onde ela está atualmente ausente?`,
       confirmText: "Sincronizar",
       cancelText: "Cancelar",
       type: "warning",
@@ -271,11 +310,17 @@ export default function Dashboard() {
             const exists = !!rawFlagsByEnv[env.id]?.[flagId];
             if (!exists) {
               const docRef = doc(env.db, env.collectionName, flagId);
-              return setDoc(docRef, {
-                enabled: false,
+              const docData: any = {
+                type: flagType,
                 description: currentDescription || "Alinhado automaticamente.",
                 updatedAt: serverTimestamp()
-              });
+              };
+              if (flagType === "numeric") {
+                docData.value = 10;
+              } else {
+                docData.enabled = false;
+              }
+              return setDoc(docRef, docData);
             }
             return Promise.resolve();
           });
@@ -288,6 +333,72 @@ export default function Dashboard() {
         }
       }
     });
+  };
+
+  const handleInitialize = async (
+    flagId: string,
+    envId: string,
+    flagType: "boolean" | "numeric",
+    fallbackDescription: string
+  ) => {
+    const env = ENVIRONMENTS.find(e => e.id === envId);
+    if (!env) return;
+
+    try {
+      const docRef = doc(env.db, env.collectionName, flagId);
+      const docData: any = {
+        type: flagType,
+        description: fallbackDescription || "Inicializado automaticamente para resolver desalinhamento.",
+        updatedAt: serverTimestamp()
+      };
+      if (flagType === "numeric") {
+        docData.value = 10;
+      } else {
+        docData.enabled = false;
+      }
+      await setDoc(docRef, docData);
+    } catch (e) {
+      console.error(`Erro ao inicializar flag ${flagId} no ambiente ${envId}:`, e);
+      showAlert("Erro ao Inicializar", `Erro ao inicializar a feature flag no ambiente ${env.name}.`, "danger");
+    }
+  };
+
+  const handleEditNumeric = (flagId: string, envId: string, currentValue: number) => {
+    setEditFlagId(flagId);
+    setEditEnvId(envId);
+    setEditValue(String(currentValue));
+    setEditModalError(null);
+    setShowEditNumericModal(true);
+  };
+
+  const handleUpdateNumericValue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditModalError(null);
+    const numValue = Number(editValue);
+
+    if (isNaN(numValue)) {
+      setEditModalError("O valor deve ser um número válido.");
+      return;
+    }
+
+    const env = ENVIRONMENTS.find(e => e.id === editEnvId);
+    if (!env) return;
+
+    setEditModalLoading(true);
+    try {
+      const docRef = doc(env.db, env.collectionName, editFlagId);
+      await updateDoc(docRef, {
+        value: numValue,
+        updatedAt: serverTimestamp()
+      });
+      setShowEditNumericModal(false);
+      showAlert("Valor Atualizado", `O valor da flag "${editFlagId}" no ambiente ${env.name} foi atualizado para ${numValue}.`, "success");
+    } catch (e: any) {
+      console.error(`Erro ao atualizar valor da flag ${editFlagId} no ${editEnvId}:`, e);
+      setEditModalError("Erro ao salvar no Firestore: " + (e.message || e));
+    } finally {
+      setEditModalLoading(false);
+    }
   };
 
   // Get union of all flag IDs across all environments
@@ -575,28 +686,43 @@ export default function Dashboard() {
                         {ENVIRONMENTS.map((env) => {
                           const envFlag = rawFlagsByEnv[env.id]?.[flagId];
                           const exists = !!envFlag;
-                          const enabled = exists ? envFlag.enabled : false;
+                          const flagType = getFlagType(flagId);
 
                           return (
                             <td key={env.id} className="px-6 py-4 text-center">
                               <div className="flex flex-col items-center justify-center gap-1">
                                 {exists ? (
-                                  <button
-                                    onClick={() => handleToggle(flagId, env.id, enabled, true, desc)}
-                                    className="focus:outline-none transition-transform active:scale-95 cursor-pointer"
-                                    title={`Desativar/Ativar no ${env.name}`}
-                                  >
-                                    {enabled ? (
-                                      <ToggleRight className="h-9 w-9 text-emerald-500" />
-                                    ) : (
-                                      <ToggleLeft className="h-9 w-9 text-zinc-600" />
-                                    )}
-                                  </button>
+                                  flagType === "numeric" ? (
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono font-bold text-sm text-zinc-100 bg-zinc-900 px-2.5 py-1 rounded border border-zinc-800">
+                                        {envFlag.value !== undefined ? envFlag.value : 10}
+                                      </span>
+                                      <button
+                                        onClick={() => handleEditNumeric(flagId, env.id, envFlag.value !== undefined ? envFlag.value : 10)}
+                                        className="p-1 rounded text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-all cursor-pointer"
+                                        title={`Editar valor no ${env.name}`}
+                                      >
+                                        <Edit3 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleToggle(flagId, env.id, envFlag.enabled, true, desc)}
+                                      className="focus:outline-none transition-transform active:scale-95 cursor-pointer"
+                                      title={`Desativar/Ativar no ${env.name}`}
+                                    >
+                                      {envFlag.enabled ? (
+                                        <ToggleRight className="h-9 w-9 text-emerald-500" />
+                                      ) : (
+                                        <ToggleLeft className="h-9 w-9 text-zinc-600" />
+                                      )}
+                                    </button>
+                                  )
                                 ) : (
                                   <button
-                                    onClick={() => handleToggle(flagId, env.id, false, false, desc)}
+                                    onClick={() => handleInitialize(flagId, env.id, flagType, desc)}
                                     className="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-500 text-[9px] font-bold hover:bg-amber-500 hover:text-zinc-950 transition-all cursor-pointer"
-                                    title="Chave ausente neste ambiente. Clique para criá-la como Inativa (false)."
+                                    title="Chave ausente neste ambiente. Clique para criá-la."
                                   >
                                     Inicializar
                                   </button>
@@ -790,46 +916,118 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Initial Values per Environment */}
-                <div className="space-y-3">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
-                    Estado Inicial por Ambiente
+                {/* Type Selection */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400 font-sans">
+                    Tipo de Feature Flag
                   </label>
-                  
-                  <div className="space-y-2">
-                    {ENVIRONMENTS.map((env) => {
-                      const isEnabled = newEnabledMap[env.id] || false;
-                      return (
-                        <div 
-                          key={env.id} 
-                          className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${env.badgeClass}`}>
-                              {env.name}
-                            </span>
-                            <span className="text-xs text-zinc-400">Ativa neste ambiente?</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setNewEnabledMap(prev => ({
-                              ...prev,
-                              [env.id]: !isEnabled
-                            }))}
-                            disabled={modalLoading}
-                            className="focus:outline-none transition-transform active:scale-95 cursor-pointer"
-                          >
-                            {isEnabled ? (
-                              <ToggleRight className="h-8 w-8 text-emerald-500" />
-                            ) : (
-                              <ToggleLeft className="h-8 w-8 text-zinc-650" />
-                            )}
-                          </button>
-                        </div>
-                      );
-                    })}
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setNewType("boolean")}
+                      className={`py-2.5 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                        newType === "boolean"
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-400"
+                          : "bg-zinc-950 border-zinc-800 text-zinc-450 hover:border-zinc-700"
+                      }`}
+                    >
+                      Booleana (True / False)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewType("numeric")}
+                      className={`py-2.5 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                        newType === "numeric"
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-400"
+                          : "bg-zinc-950 border-zinc-800 text-zinc-450 hover:border-zinc-700"
+                      }`}
+                    >
+                      Numérica (Número)
+                    </button>
                   </div>
                 </div>
+
+                {/* Initial Values per Environment (Boolean) */}
+                {newType === "boolean" && (
+                  <div className="space-y-3">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
+                      Estado Inicial por Ambiente
+                    </label>
+                    
+                    <div className="space-y-2">
+                      {ENVIRONMENTS.map((env) => {
+                        const isEnabled = newEnabledMap[env.id] || false;
+                        return (
+                          <div 
+                            key={env.id} 
+                            className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${env.badgeClass}`}>
+                                {env.name}
+                              </span>
+                              <span className="text-xs text-zinc-455">Ativa neste ambiente?</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setNewEnabledMap(prev => ({
+                                ...prev,
+                                [env.id]: !isEnabled
+                              }))}
+                              disabled={modalLoading}
+                              className="focus:outline-none transition-transform active:scale-95 cursor-pointer"
+                            >
+                              {isEnabled ? (
+                                <ToggleRight className="h-8 w-8 text-emerald-500" />
+                              ) : (
+                                <ToggleLeft className="h-8 w-8 text-zinc-650" />
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Initial Values per Environment (Numeric) */}
+                {newType === "numeric" && (
+                  <div className="space-y-3">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
+                      Valor Inicial por Ambiente
+                    </label>
+                    
+                    <div className="space-y-2">
+                      {ENVIRONMENTS.map((env) => {
+                        const val = newValuesMap[env.id] !== undefined ? newValuesMap[env.id] : 10;
+                        return (
+                          <div 
+                            key={env.id} 
+                            className="flex items-center justify-between p-3 bg-zinc-950 rounded-xl border border-zinc-800 gap-4"
+                          >
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${env.badgeClass}`}>
+                                {env.name}
+                              </span>
+                              <span className="text-xs text-zinc-455">Valor inicial</span>
+                            </div>
+                            <input
+                              type="number"
+                              value={val}
+                              onChange={(e) => setNewValuesMap(prev => ({
+                                ...prev,
+                                [env.id]: Number(e.target.value)
+                              }))}
+                              disabled={modalLoading}
+                              className="w-24 px-3 py-1.5 text-sm bg-zinc-900 border border-zinc-800 rounded-lg focus:border-emerald-500 outline-none font-mono text-right"
+                              required
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Actions Footer */}
@@ -859,6 +1057,95 @@ export default function Dashboard() {
 
           </div>
 
+        </div>
+      )}
+
+      {/* Modal - Edit Numeric Value */}
+      {showEditNumericModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          {/* Overlay */}
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => !editModalLoading && setShowEditNumericModal(false)}
+          />
+
+          {/* Dialog Body */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl relative z-10 flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 pb-4 border-b border-zinc-850">
+              <h3 className="text-base font-bold text-zinc-100">Editar Valor Numérico</h3>
+              <button 
+                type="button"
+                onClick={() => setShowEditNumericModal(false)}
+                disabled={editModalLoading}
+                className="text-zinc-500 hover:text-zinc-300 text-sm font-semibold cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleUpdateNumericValue}>
+              <div className="p-6 space-y-4">
+                {editModalError && (
+                  <div className="p-4 rounded-xl bg-red-950/30 border border-red-900/50 text-red-200 text-xs flex items-center gap-2">
+                    <Info className="h-4 w-4 text-red-400 shrink-0" />
+                    <span>{editModalError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Feature Flag</p>
+                  <p className="text-sm font-mono font-bold text-zinc-200 bg-zinc-950 px-3 py-2 rounded-lg border border-zinc-850">{editFlagId}</p>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Ambiente</p>
+                  <p className="text-sm font-semibold text-zinc-200">
+                    {ENVIRONMENTS.find(e => e.id === editEnvId)?.name || editEnvId}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    Valor
+                  </label>
+                  <input
+                    type="number"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    className="w-full px-4 py-2.5 text-sm bg-zinc-950 border border-zinc-800 rounded-xl focus:border-emerald-500 outline-none font-mono"
+                    required
+                    disabled={editModalLoading}
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Actions Footer */}
+              <div className="flex justify-end gap-3 p-6 pt-4 border-t border-zinc-850">
+                <button
+                  type="button"
+                  onClick={() => setShowEditNumericModal(false)}
+                  disabled={editModalLoading}
+                  className="py-2.5 px-4 rounded-xl text-xs font-semibold text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:bg-zinc-800/20 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={editModalLoading}
+                  className="py-2.5 px-5 rounded-xl text-xs font-bold tracking-wide transition-all duration-300 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-zinc-950 cursor-pointer flex items-center gap-2 shadow-lg shadow-emerald-500/10"
+                >
+                  {editModalLoading ? (
+                    <div className="h-4 w-4 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    "Salvar"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
