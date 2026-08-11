@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore } from "firebase/firestore";
+import { initializeFirestore, getFirestore } from "firebase/firestore";
 
 // Main configurations (used for Authentication and fallback)
 const mainConfig = {
@@ -46,12 +46,22 @@ export const auth = getAuth(mainApp);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-// Initialize Firestore Databases
+// Initialize Firestore Databases safely
 const dbDevName = import.meta.env.VITE_FIRESTORE_DATABASE_DEV || "(default)";
 const dbProdName = import.meta.env.VITE_FIRESTORE_DATABASE_PROD || "(default)";
 
-export const dbDev = initializeFirestore(devApp, {}, dbDevName);
-export const dbProd = initializeFirestore(prodApp, {}, dbProdName);
+const getOrCreateFirestore = (app: any, dbName: string) => {
+  try {
+    return getFirestore(app, dbName);
+  } catch {
+    return initializeFirestore(app, {}, dbName);
+  }
+};
+
+export const dbDev = getOrCreateFirestore(devApp, dbDevName);
+export const dbProd = (devApp === prodApp && dbDevName === dbProdName) 
+  ? dbDev 
+  : getOrCreateFirestore(prodApp, dbProdName);
 
 // Firestore collection names
 export const collectionDev = import.meta.env.VITE_FIRESTORE_COLLECTION_DEV || "feature_flags_dev";

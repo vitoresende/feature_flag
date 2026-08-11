@@ -96,6 +96,8 @@ export default function Dashboard() {
 
   // Listen to all environments in real-time
   useEffect(() => {
+    if (!user) return;
+
     setLoading(true);
     
     // Set up snapshot listeners for all configured environments
@@ -124,7 +126,7 @@ export default function Dashboard() {
       unsubscribes.forEach(unsub => unsub());
       clearTimeout(timeout);
     };
-  }, []);
+  }, [user]);
 
   // Alert/Confirm Helpers
   const showAlert = (title: string, message: string, type: "danger" | "info" | "success" | "warning" = "info") => {
