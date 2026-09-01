@@ -11,6 +11,7 @@ A aplicação conta com autenticação segura via **Google Sign-In**, restringin
 Para evitar o desalinhamento de ambientes (por exemplo, uma flag existir em Desenvolvimento mas ser esquecida em Produção), este dashboard adota a estratégia de **Tabela Unificada**:
 - 🔑 **Sincronia Total de Chaves**: Ao criar ou deletar uma feature flag no painel, a chave é automaticamente cadastrada ou removida de **todos** os ambientes conectados.
 - 🎛️ **Valores Independentes**: O status (`true` ou `false`) de cada chave é controlado de forma independente por colunas específicas para cada ambiente.
+- 📝 **Edição Sincronizada de Descrição**: Atualize a descrição de qualquer flag clicando na célula ou no botão de editar, sincronizando o texto em todos os ambientes.
 - 📌 **Flags Permanentes vs Temporárias (`is_permanent`)**: Permite classificar cada toggle como permanente (kill-switches, configurações operacionais) ou temporário (testes A/B, lançamentos), com suporte a filtros rápidos na barra de busca e nos cards de estatísticas.
 - ⚠️ **Detecção de Desalinhamento (Drift)**: Caso uma chave tenha sido deletada manualmente ou criada fora do painel em algum ambiente, o sistema exibe um aviso visual de **"Desalinhada"** e disponibiliza um botão **"Alinhar"** para restaurar a sincronia instantaneamente.
 
