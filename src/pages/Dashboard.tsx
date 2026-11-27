@@ -1,7 +1,30 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { ENVIRONMENTS } from "../firebase";
+import {
+  ENVIRONMENTS,
+  dbMain,
+  collectionConnectedRepos,
+  collectionCodeReferences,
+} from "../firebase";
 import ConfirmationModal from "../components/ConfirmationModal";
+import FlagReferencesModal from "../components/FlagReferencesModal";
+import RepositoriesModal, {
+  ConnectRepoFormData,
+} from "../components/RepositoriesModal";
+import {
+  ConnectedRepository,
+  FlagReferencesResult,
+} from "../types/codeReferences";
+import {
+  buildRepoDocId,
+  searchFlagAcrossRepositories,
+  validateRepositoryAccess,
+} from "../services/gitClientService";
+import {
+  buildTokenHint,
+  decryptTokenWithPassphrase,
+  encryptTokenWithPassphrase,
+} from "../utils/vaultCrypto";
 import { 
   collection, 
   onSnapshot, 
@@ -27,7 +50,9 @@ import {
   AlertTriangle,
   Edit3,
   Pin,
-  Clock
+  Clock,
+  Code2,
+  FolderGit2
 } from "lucide-react";
 
 interface FeatureFlag {
@@ -88,6 +113,15 @@ export default function Dashboard() {
   const [editDescLoading, setEditDescLoading] = useState(false);
   const [editDescError, setEditDescError] = useState<string | null>(null);
 
+  // Connected Repositories, Zero-Knowledge Vault (RAM only) & Cached References
+  const [connectedRepos, setConnectedRepos] = useState<ConnectedRepository[]>([]);
+  const [cachedRefsByFlag, setCachedRefsByFlag] = useState<Record<string, FlagReferencesResult>>({});
+  const [vaultPassphrase, setVaultPassphrase] = useState<string | null>(null);
+  const [unlockedTokens, setUnlockedTokens] = useState<Record<string, string>>({});
+  const [selectedFlagForRefs, setSelectedFlagForRefs] = useState<string | null>(null);
+  const [showReposModal, setShowReposModal] = useState(false);
+  const [reposModalInitialTab, setReposModalInitialTab] = useState<"connected" | "connect">("connected");
+
   // Unified Confirmation/Alert Modal State
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -139,6 +173,241 @@ export default function Dashboard() {
       clearTimeout(timeout);
     };
   }, [user]);
+
+  // Listen to connected repositories and cached code references in real-time
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubRepos = onSnapshot(
+      collection(dbMain, collectionConnectedRepos),
+      (snapshot) => {
+        const list: ConnectedRepository[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push({
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<ConnectedRepository, "id">),
+          });
+        });
+        list.sort((a, b) =>
+          `${a.repository}:${a.branch}`.localeCompare(`${b.repository}:${b.branch}`)
+        );
+        setConnectedRepos(list);
+      },
+      (error) => {
+        console.error("Erro ao assinar repositórios conectados:", error);
+      }
+    );
+
+    const unsubRefs = onSnapshot(
+      collection(dbMain, collectionCodeReferences),
+      (snapshot) => {
+        const refsMap: Record<string, FlagReferencesResult> = {};
+        snapshot.forEach((docSnap) => {
+          refsMap[docSnap.id] = {
+            flagKey: docSnap.id,
+            ...(docSnap.data() as Omit<FlagReferencesResult, "flagKey">),
+          };
+        });
+        setCachedRefsByFlag(refsMap);
+      },
+      (error) => {
+        console.error("Erro ao assinar cache de referências de código:", error);
+      }
+    );
+
+    return () => {
+      unsubRepos();
+      unsubRefs();
+    };
+  }, [user]);
+
+  const enabledReposCount = connectedRepos.filter((r) => r.enabled).length;
+  const isVaultUnlocked = vaultPassphrase !== null;
+
+  const handleOpenReposModal = (tab: "connected" | "connect" = "connected") => {
+    setReposModalInitialTab(tab);
+    setShowReposModal(true);
+  };
+
+  // Decrypt all vault-stored tokens into browser RAM using the user's passphrase
+  const handleUnlockVault = useCallback(
+    async (passphrase: string): Promise<Record<string, string>> => {
+      const vaultRepos = connectedRepos.filter(
+        (r) => r.storageMode === "vault" && r.encryptedToken
+      );
+      const nextTokens: Record<string, string> = { ...unlockedTokens };
+
+      for (const repo of vaultRepos) {
+        if (repo.encryptedToken) {
+          nextTokens[repo.id] = await decryptTokenWithPassphrase(
+            repo.encryptedToken,
+            passphrase
+          );
+        }
+      }
+
+      setVaultPassphrase(passphrase);
+      setUnlockedTokens(nextTokens);
+      return nextTokens;
+    },
+    [connectedRepos, unlockedTokens]
+  );
+
+  // Immediately wipe vault passphrase and decrypted vault tokens from browser RAM
+  const handleLockVault = useCallback(() => {
+    setVaultPassphrase(null);
+    setUnlockedTokens((prev) => {
+      const onlySession: Record<string, string> = {};
+      for (const repo of connectedRepos) {
+        if (repo.storageMode === "session" && prev[repo.id]) {
+          onlySession[repo.id] = prev[repo.id];
+        }
+      }
+      return onlySession;
+    });
+  }, [connectedRepos]);
+
+  // Validate token live against GitHub/GitLab, encrypt locally if vault mode, and save to Firestore
+  const handleConnectRepo = async (
+    formData: ConnectRepoFormData
+  ): Promise<ConnectedRepository> => {
+    const validated = await validateRepositoryAccess({
+      provider: formData.provider,
+      repository: formData.repository,
+      branch: formData.branch,
+      token: formData.token,
+      baseUrl: formData.baseUrl,
+    });
+
+    const repoId = buildRepoDocId(
+      validated.provider,
+      validated.repository,
+      validated.branch
+    );
+    const activePassphrase = formData.vaultPassphrase || vaultPassphrase;
+
+    let encryptedToken = null;
+    if (formData.storageMode === "vault") {
+      if (!activePassphrase) {
+        throw new Error("Informe a senha do cofre para criptografar o token.");
+      }
+
+      // If existing vault repos exist and vault was still locked, verify the passphrase matches them
+      const existingVaultRepo = connectedRepos.find(
+        (r) => r.storageMode === "vault" && r.encryptedToken && r.id !== repoId
+      );
+      if (existingVaultRepo?.encryptedToken && !vaultPassphrase) {
+        await decryptTokenWithPassphrase(existingVaultRepo.encryptedToken, activePassphrase);
+      }
+
+      encryptedToken = await encryptTokenWithPassphrase(formData.token, activePassphrase);
+    }
+
+    const docData = {
+      repository: validated.repository,
+      provider: validated.provider,
+      branch: validated.branch,
+      defaultBranch: validated.defaultBranch,
+      repoUrl: validated.repoUrl,
+      baseUrl: validated.baseUrl,
+      isPrivate: validated.isPrivate,
+      tokenHint: buildTokenHint(formData.token),
+      storageMode: formData.storageMode,
+      encryptedToken,
+      includeSnippets: formData.includeSnippets,
+      enabled: true,
+      connectedBy: user?.email || "admin",
+      connectedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    await setDoc(doc(dbMain, collectionConnectedRepos, repoId), docData, {
+      merge: true,
+    });
+
+    // Keep plaintext token only in React RAM for this session
+    setUnlockedTokens((prev) => ({ ...prev, [repoId]: formData.token }));
+
+    if (formData.storageMode === "vault" && activePassphrase && !vaultPassphrase) {
+      await handleUnlockVault(activePassphrase);
+      setUnlockedTokens((prev) => ({ ...prev, [repoId]: formData.token }));
+    }
+
+    return {
+      id: repoId,
+      ...docData,
+      connectedAt: new Date(),
+      updatedAt: new Date(),
+    };
+  };
+
+  const handleToggleRepo = async (repo: ConnectedRepository) => {
+    await updateDoc(doc(dbMain, collectionConnectedRepos, repo.id), {
+      enabled: !repo.enabled,
+      updatedAt: serverTimestamp(),
+    });
+  };
+
+  const handleDisconnectRepo = (repo: ConnectedRepository) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Desconectar Repositório",
+      message: `Deseja desconectar "${repo.repository}" (branch ${repo.branch})? Os metadados e o token criptografado serão excluídos do Firestore.`,
+      confirmText: "Desconectar",
+      cancelText: "Cancelar",
+      type: "danger",
+      onConfirm: async () => {
+        closeConfirmModal();
+        try {
+          await deleteDoc(doc(dbMain, collectionConnectedRepos, repo.id));
+          setUnlockedTokens((prev) => {
+            const copy = { ...prev };
+            delete copy[repo.id];
+            return copy;
+          });
+          showAlert(
+            "Repositório Desconectado",
+            `O repositório "${repo.repository}" foi removido com sucesso.`,
+            "success"
+          );
+        } catch (e) {
+          console.error("Erro ao desconectar repositório:", e);
+          showAlert(
+            "Erro ao Desconectar",
+            "Não foi possível remover o repositório. Verifique se rodou npm run deploy:rules.",
+            "danger"
+          );
+        }
+      },
+    });
+  };
+
+  const handleSearchFlag = useCallback(
+    async (
+      flagKey: string,
+      overrideTokens?: Record<string, string>
+    ): Promise<FlagReferencesResult> => {
+      const tokensToUse = overrideTokens || unlockedTokens;
+      const result = await searchFlagAcrossRepositories({
+        repos: connectedRepos,
+        tokensByRepoId: tokensToUse,
+        flagKey,
+      });
+
+      // Cache result in Firestore (non-sensitive file paths + lines)
+      try {
+        await setDoc(doc(dbMain, collectionCodeReferences, flagKey), {
+          ...result,
+          scannedAt: serverTimestamp(),
+        });
+      } catch (cacheErr) {
+        console.warn("Não foi possível salvar cache de referências no Firestore:", cacheErr);
+      }
+
+      return result;
+    },
+    [connectedRepos, unlockedTokens]
+  );
 
   // Alert/Confirm Helpers
   const showAlert = (title: string, message: string, type: "danger" | "info" | "success" | "warning" = "info") => {
@@ -587,9 +856,26 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* User Profile & Logout */}
+        {/* User Profile & Repositories & Logout */}
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 border-zinc-800 pl-4">
+          <button
+            type="button"
+            onClick={() => handleOpenReposModal("connected")}
+            title="Conectar e gerenciar repositórios Git para buscar uso das feature flags"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-200 transition-all cursor-pointer"
+          >
+            <FolderGit2 className="h-4 w-4 text-emerald-400" />
+            <span className="hidden sm:inline">Repositórios</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              connectedRepos.length > 0
+                ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                : "bg-zinc-800 text-zinc-400"
+            }`}>
+              {connectedRepos.length}
+            </span>
+          </button>
+
+          <div className="flex items-center gap-3 border-l border-zinc-800 pl-4">
             <div className="hidden sm:block text-right">
               <p className="text-xs font-semibold text-zinc-200">{user?.displayName || "Administrador"}</p>
               <p className="text-[10px] text-zinc-500">{user?.email}</p>
@@ -846,10 +1132,16 @@ export default function Dashboard() {
                         
                         {/* Flag Key */}
                         <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-sm text-zinc-100 bg-zinc-900 px-2.5 py-1 rounded border border-zinc-800 group-hover:border-zinc-700 transition-all">
-                              {flagId}
-                            </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedFlagForRefs(flagId)}
+                              title="Clique para ver em quais arquivos e repositórios esta flag está sendo utilizada"
+                              className="inline-flex items-center gap-1.5 font-mono font-bold text-sm text-zinc-100 bg-zinc-900 px-2.5 py-1 rounded border border-zinc-800 hover:border-emerald-500/50 hover:text-emerald-300 hover:bg-emerald-500/5 transition-all cursor-pointer"
+                            >
+                              <span>{flagId}</span>
+                              <Code2 className="h-3.5 w-3.5 text-zinc-500 group-hover:text-emerald-400 transition-colors shrink-0" />
+                            </button>
                             <button
                               onClick={() => copyToClipboard(flagId)}
                               title="Copiar Chave"
@@ -861,6 +1153,40 @@ export default function Dashboard() {
                                 <Copy className="h-3.5 w-3.5" />
                               )}
                             </button>
+
+                            {/* Code References Usage Badge (from cached scan) */}
+                            {(() => {
+                              const cached = cachedRefsByFlag[flagId];
+                              if (cached && cached.totalFiles > 0) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedFlagForRefs(flagId)}
+                                    title={`Encontrada em ${cached.totalFiles} arquivo(s) e ${cached.totalRepos} repositório(s). Clique para inspecionar.`}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-cyan-500/10 border border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400/40 transition-all cursor-pointer shrink-0"
+                                  >
+                                    <Code2 className="h-2.5 w-2.5" />
+                                    <span>
+                                      {cached.totalFiles} {cached.totalFiles === 1 ? "arq." : "arqs."}
+                                      {cached.totalRepos > 1 ? ` · ${cached.totalRepos} repos` : ""}
+                                    </span>
+                                  </button>
+                                );
+                              }
+                              if (cached && cached.totalFiles === 0 && enabledReposCount > 0) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedFlagForRefs(flagId)}
+                                    title="Nenhuma referência encontrada na última busca. Clique para reescanear."
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wider bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700 transition-all cursor-pointer shrink-0"
+                                  >
+                                    <span>Sem uso</span>
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
 
                             {/* Permanence Badge */}
                             {(() => {
@@ -989,9 +1315,16 @@ export default function Dashboard() {
                           );
                         })}
 
-                        {/* Actions (Editar Descrição/Sincronizar/Excluir) */}
+                        {/* Actions (Referências/Editar Descrição/Sincronizar/Excluir) */}
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setSelectedFlagForRefs(flagId)}
+                              className="p-2 text-zinc-500 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-xl transition-all cursor-pointer"
+                              title="Ver arquivos onde esta flag é utilizada"
+                            >
+                              <Code2 className="h-4 w-4" />
+                            </button>
                             <button
                               onClick={() => handleOpenEditDescription(flagId)}
                               className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all cursor-pointer"
@@ -1537,6 +1870,37 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Modal - Flag Code References */}
+      <FlagReferencesModal
+        isOpen={selectedFlagForRefs !== null}
+        flagId={selectedFlagForRefs}
+        description={selectedFlagForRefs ? getFlagDescription(selectedFlagForRefs) : ""}
+        cachedResult={selectedFlagForRefs ? cachedRefsByFlag[selectedFlagForRefs] || null : null}
+        repos={connectedRepos}
+        unlockedTokens={unlockedTokens}
+        onUnlockVault={handleUnlockVault}
+        onSearchFlag={handleSearchFlag}
+        onClose={() => setSelectedFlagForRefs(null)}
+        onOpenConnectRepos={() => handleOpenReposModal("connect")}
+      />
+
+      {/* Modal - Connected Repositories */}
+      <RepositoriesModal
+        isOpen={showReposModal}
+        initialTab={reposModalInitialTab}
+        repos={connectedRepos}
+        unlockedTokens={unlockedTokens}
+        isVaultUnlocked={isVaultUnlocked}
+        onUnlockVault={async (pass) => {
+          await handleUnlockVault(pass);
+        }}
+        onLockVault={handleLockVault}
+        onConnectRepo={handleConnectRepo}
+        onToggleRepo={handleToggleRepo}
+        onDisconnectRepo={handleDisconnectRepo}
+        onClose={() => setShowReposModal(false)}
+      />
 
       {/* Unified Reusable Confirmation/Alert Modal */}
       <ConfirmationModal

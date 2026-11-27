@@ -49,6 +49,7 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 // Initialize Firestore Databases safely
 const dbDevName = import.meta.env.VITE_FIRESTORE_DATABASE_DEV || "(default)";
 const dbProdName = import.meta.env.VITE_FIRESTORE_DATABASE_PROD || "(default)";
+const dbMetaName = import.meta.env.VITE_FIRESTORE_DATABASE_META || dbDevName;
 
 const getOrCreateFirestore = (app: any, dbName: string) => {
   try {
@@ -62,10 +63,17 @@ export const dbDev = getOrCreateFirestore(devApp, dbDevName);
 export const dbProd = (devApp === prodApp && dbDevName === dbProdName) 
   ? dbDev 
   : getOrCreateFirestore(prodApp, dbProdName);
+export const dbMain = (mainApp === devApp && dbMetaName === dbDevName)
+  ? dbDev
+  : getOrCreateFirestore(mainApp, dbMetaName);
 
 // Firestore collection names
 export const collectionDev = import.meta.env.VITE_FIRESTORE_COLLECTION_DEV || "feature_flags_dev";
 export const collectionProd = import.meta.env.VITE_FIRESTORE_COLLECTION_PROD || "feature_flags_prod";
+export const collectionConnectedRepos =
+  import.meta.env.VITE_FIRESTORE_COLLECTION_REPOS || "connected_repositories";
+export const collectionCodeReferences =
+  import.meta.env.VITE_FIRESTORE_COLLECTION_CODE_REFS || "flag_code_references";
 
 // Environment Configuration Types
 export interface EnvironmentConfig {

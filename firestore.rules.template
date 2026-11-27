@@ -2,21 +2,34 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isAdmin() {
+      return request.auth != null &&
+             (request.auth.token.email in ALLOWED_EMAILS_PLACEHOLDER);
+    }
+
     // Rules for Development Feature Flags (DEV)
     match /feature_flags_dev/{document} {
       // Allows any client/service to read flags to check what is active
       allow read: if true;
       
-      // Only the admin email from the .env can create/update/delete flags
-      allow write: if request.auth != null && 
-                      (request.auth.token.email in ALLOWED_EMAILS_PLACEHOLDER);
+      // Only the admin emails from the .env can create/update/delete flags
+      allow write: if isAdmin();
     }
 
     // Rules for Production Feature Flags (PROD)
     match /feature_flags_prod/{document} {
       allow read: if true;
-      allow write: if request.auth != null && 
-                      (request.auth.token.email in ALLOWED_EMAILS_PLACEHOLDER);
+      allow write: if isAdmin();
+    }
+
+    // Connected repositories with client-side E2EE encrypted tokens (PBKDF2 + AES-256-GCM)
+    match /connected_repositories/{repoId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Cached feature flag code references (restricted strictly to authenticated admins)
+    match /flag_code_references/{flagId} {
+      allow read, write: if isAdmin();
     }
 
     // Rules for other collections (maintaining compatibility with other frontends)

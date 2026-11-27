@@ -87,6 +87,28 @@ service cloud.firestore {
 
 ---
 
+## 🔍 Repositórios Conectados & Uso no Código (Zero Backend + Cofre Criptografado)
+
+Você pode conectar repositórios do **GitHub** ou **GitLab** diretamente pela interface da aplicação — **sem precisar de Cloud Functions, Secret Manager ou plano Blaze** — e, ao clicar em qualquer Feature Flag, ver exatamente em quais arquivos e linhas ela está sendo utilizada.
+
+### Arquitetura de Segurança (Zero-Knowledge no Cliente)
+1. **Criptografia ponta-a-ponta (`PBKDF2 600k + AES-256-GCM`):** no modo **Cofre Criptografado**, o token read-only é cifrado no próprio navegador usando a **Web Crypto API** nativa antes de ser salvo no Firestore. A senha do cofre **nunca** sai da memória RAM e nunca é enviada ao banco.
+2. **Modo Somente Sessão (opcional):** se preferir não salvar nada no banco, escolha **"Somente nesta sessão (RAM)"** — o token é descartado automaticamente ao fechar a aba.
+3. **Regras estritas no Firestore:** as coleções `connected_repositories` e `flag_code_references` são restritas exclusivamente aos e-mails administradores autenticados (`isAdmin()`).
+4. **Modo Privacidade (opcional):** marque *"omitir trechos de código"* para salvar no cache apenas o caminho do arquivo e o número da linha.
+
+### Como ativar (1 único passo!)
+1. Atualize as regras do Firestore (mesmo comando que você já usa no deploy):
+   ```bash
+   npm run deploy:rules -- --project SEU_PROJECT_ID
+   ```
+2. Abra o painel → clique em **Repositórios** → **Conectar Repositório**:
+   * Gere um token **somente leitura** (no GitHub: Fine-grained PAT com apenas `Contents: Read-only`; no GitLab: `read_repository` + `read_api`).
+   * Informe `organizacao/repo`, cole o token, defina a senha do cofre (ou escolha *Somente nesta sessão*) e clique em **Validar e Conectar**.
+3. Clique em qualquer **Feature Flag** na tabela para buscar em tempo real e abrir os arquivos diretamente na linha exata!
+
+---
+
 ## 💻 Como implementar e consumir nos seus projetos
 
 Aqui estão os padrões de implementação recomendados para consumir estas flags nos seus projetos de forma segura, performática e com custo zero.

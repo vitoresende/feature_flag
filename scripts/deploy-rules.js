@@ -1,6 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+import fs from 'node:fs';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load .env from root of feature_flag
 const envPath = path.resolve(__dirname, '../.env');
@@ -37,7 +41,7 @@ if (!fs.existsSync(templatePath)) {
 }
 
 let rulesContent = fs.readFileSync(templatePath, 'utf8');
-rulesContent = rulesContent.replace('ALLOWED_EMAILS_PLACEHOLDER', celArray);
+rulesContent = rulesContent.replaceAll('ALLOWED_EMAILS_PLACEHOLDER', celArray);
 
 // Write active rules file (which is gitignored)
 const rulesPath = path.resolve(__dirname, '../firestore.rules');
