@@ -17,6 +17,7 @@ import {
 } from "../types/codeReferences";
 import {
   buildRepoDocId,
+  clearRepoScanCache,
   searchFlagAcrossRepositories,
   validateRepositoryAccess,
 } from "../services/gitClientService";
@@ -253,9 +254,10 @@ export default function Dashboard() {
     [connectedRepos, unlockedTokens]
   );
 
-  // Immediately wipe vault passphrase and decrypted vault tokens from browser RAM
+  // Immediately wipe vault passphrase, decrypted vault tokens, and cached repo contents from RAM
   const handleLockVault = useCallback(() => {
     setVaultPassphrase(null);
+    clearRepoScanCache();
     setUnlockedTokens((prev) => {
       const onlySession: Record<string, string> = {};
       for (const repo of connectedRepos) {
@@ -360,6 +362,7 @@ export default function Dashboard() {
         closeConfirmModal();
         try {
           await deleteDoc(doc(dbMain, collectionConnectedRepos, repo.id));
+          clearRepoScanCache(repo.id);
           setUnlockedTokens((prev) => {
             const copy = { ...prev };
             delete copy[repo.id];
